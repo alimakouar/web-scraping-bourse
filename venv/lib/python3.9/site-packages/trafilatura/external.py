@@ -1,0 +1,147 @@
+# pylint:disable-msg=I1101
+"""
+Functions grounding on third-party software.
+"""
+
+## This file is available from https://github.com/adbar/trafilatura
+## under GNU GPL v3 license
+
+
+import logging
+import os
+
+try:
+    from contextlib import redirect_stderr
+    MUFFLE_FLAG = True
+except ImportError:
+    MUFFLE_FLAG = False
+
+
+# third-party
+from lxml import etree, html
+from readability import Document
+from readability.readability import Unparseable
+
+# try this option
+try:
+    import justext
+    JT_STOPLIST = set()
+    for language in justext.get_stoplists():
+        JT_STOPLIST.update(justext.get_stoplist(language))
+except ImportError:
+    justext = JT_STOPLIST = None
+
+# own
+from .htmlprocessing import convert_tags, prune_html
+from .settings import JUSTEXT_LANGUAGES, MANUALLY_STRIPPED
+from .utils import trim, HTML_PARSER
+from .xml import TEI_VALID_TAGS
+
+
+LOGGER = logging.getLogger(__name__)
+
+SANITIZED_XPATH = '//aside|//audio|//button|//fieldset|//figure|//footer|//iframe|//img|//image|//input|//label|//link|//nav|//noindex|//noscript|//object|//option|//select|//source|//svg|//time'
+
+
+class LXMLDocument(Document):
+    '''Sub-class of readability.Document accepting parsed trees as input'''
+    def __init__(self, input_, *args, **kwargs):
+        super().__init__(input_)
+
+    def _parse(self, input_):
+        return input_
+
+
+def try_readability(htmlinput, url):
+    '''Safety net: try with the generic algorithm readability'''
+    # defaults: min_text_length=25, retry_length=250
+    try:
+        doc = LXMLDocument(htmlinput, url=url, min_text_length=25, retry_length=250)
+        if MUFFLE_FLAG is False:
+            resultstring = doc.summary(html_partial=True)
+        else:
+            with open(os.devnull, 'w') as devnull:
+                with redirect_stderr(devnull):
+                    resultstring = doc.summary(html_partial=True)
+        return html.fromstring(resultstring, parser=HTML_PARSER)
+    except (etree.SerialisationError, Unparseable):
+        return etree.Element('div')
+
+
+# bypass parsing
+#def my_bypass(html_tree, default_encoding, encoding, enc_errors):
+#    return html_tree
+#if justext:
+#    justext.html_to_dom = my_bypass
+
+
+def try_justext(tree, url, target_language):
+    '''Second safety net: try with the generic algorithm justext'''
+    result_body = etree.Element('body')
+    justtextstring = html.tostring(tree, pretty_print=False, encoding='utf-8')
+    # determine language
+    if target_language is not None and target_language in JUSTEXT_LANGUAGES:
+        langsetting = JUSTEXT_LANGUAGES[target_language]
+        justext_stoplist = justext.get_stoplist(langsetting)
+    else:
+        #justext_stoplist = justext.get_stoplist(JUSTEXT_DEFAULT)
+        justext_stoplist = JT_STOPLIST
+    # extract
+    try:
+        paragraphs = justext.justext(justtextstring, justext_stoplist, 50, 200, 0.1, 0.2, 0.2, 200, True)
+    except ValueError as err:  # not an XML element: HtmlComment
+        LOGGER.error('justext %s %s', err, url)
+        result_body = None
+    else:
+        for paragraph in [p for p in paragraphs if not p.is_boilerplate]:
+            #if duplicate_test(paragraph) is not True:
+            elem = etree.Element('p')
+            elem.text = paragraph.text
+            result_body.append(elem)
+    return result_body
+
+
+def justext_rescue(tree, url, target_language, postbody, len_text, text):
+    '''Try to use justext algorithm as a second fallback'''
+    result_bool = False
+    temppost_algo = try_justext(tree, url, target_language)
+    if temppost_algo is not None:
+        temp_text = trim(' '.join(temppost_algo.itertext()))
+        len_algo = len(temp_text)
+        if len_algo > len_text:
+            postbody, text, len_text = temppost_algo, temp_text, len_algo
+            result_bool = True
+    return postbody, text, len_text, result_bool
+
+
+def sanitize_tree(tree, include_formatting=False):
+    '''Convert and sanitize the output from the generic algorithm (post-processing)'''
+    # delete unnecessary elements
+    for elem in tree.xpath(SANITIZED_XPATH):
+        elem.getparent().remove(elem)
+    etree.strip_tags(tree, MANUALLY_STRIPPED + ['a', 'span'])
+    tree = prune_html(tree)
+    # convert
+    cleaned_tree = convert_tags(tree, include_formatting)
+    for elem in cleaned_tree.iter('td', 'th', 'tr'):
+        # elem.text, elem.tail = trim(elem.text), trim(elem.tail)
+        # finish table conversion
+        if elem.tag == 'tr':
+            elem.tag = 'row'
+        elif elem.tag in ('td', 'th'):
+            if elem.tag == 'th':
+                elem.set('role', 'head')
+            elem.tag = 'cell'
+    # sanitize
+    sanitization_list = list()
+    for tagname in [element.tag for element in set(cleaned_tree.iter())]:
+        if tagname not in TEI_VALID_TAGS:
+            sanitization_list.append(tagname)
+        #    if tagname in ('article', 'content', 'link', 'main', 'section', 'span'):
+        #        for element in cleaned_tree.iter(tagname):
+        #            merge_with_parent(element)
+        #    else:
+        #    print(tagname)
+    etree.strip_tags(cleaned_tree, sanitization_list)
+    text = trim(' '.join(cleaned_tree.itertext()))
+    return cleaned_tree, text, len(text)

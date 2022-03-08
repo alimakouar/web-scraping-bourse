@@ -1,0 +1,21 @@
+courlan>=0.2.3
+htmldate>=0.7.2
+justext>=2.2.0
+readability-lxml>=0.8.1
+
+[:python_version == "3.4"]
+lxml==4.3.5
+requests==2.21.0
+
+[:python_version > "3.4"]
+lxml>=4.6.1
+requests>=2.21.0
+
+[all]
+pycld3>=0.20
+
+[all:python_version == "3.4"]
+cchardet==2.1.4
+
+[all:python_version > "3.4"]
+cchardet>=2.1.7
