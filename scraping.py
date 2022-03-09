@@ -14,7 +14,7 @@ def getinfo(indice,performance,period):
     print('l\'url est',url)
     r = requests.get(url, headers=headers)
     soup = BeautifulSoup(r.text, "html.parser" )
-
+    try:
         palmares = soup.find('table',{'class':'t-data-grid'}).find('tbody').find_all('tr')
         for item in palmares:
             palmare = {
@@ -24,9 +24,16 @@ def getinfo(indice,performance,period):
             'Cours' : item.find('td',{'class':'lastPrice'}).text,
             'Qté cumulée' : item.find('td',{'class':'rankingCumulatedVolume'}).text,
             'Volume cumulé' : item.find('td',{'class':'rankingTurnOver'}).text,
-
+            'Capitalisation' : item.find('td',{'class':'capitalisation'}).text,
+            'Var.(%)' : item.find('td',{'class':'rankingVariation'}).text,
+            'Date' : item.find('td',{'class':'lastPriceDateTime'}).text,
+            'indice': soup.find('option',{'value':indice}).text,
+            'performance': soup.find('option',{'value':performance}).text,
+            'period': soup.find('option',{'value':period}).text,
             }
             palmareslist.append(palmare)
         df = pd.DataFrame(palmareslist)
         print(df.head())
-        df.to_excel('fonctionbourse.xlsx', index=False)
+        df.to_excel('bourse.xlsx', index=False)
+    except:
+        print('la page est vide')
