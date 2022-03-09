@@ -37,3 +37,8 @@ def getinfo(indice,performance,period):
         df.to_excel('bourse.xlsx', index=False)
     except:
         print('la page est vide')
+
+getinfo('MASI','UP','DAY_1')
+getinfo('MADEX','DOWN','WEEK_1')
+
+print('finished')
